@@ -13,7 +13,7 @@ import traceback
 # ACCOUNT INFORMATION HERE
 name_account = 'home' #Also location name
 email_account = ''
-token = "Bearer "
+token = "Bearer 
 
 # DO NOT TOUCH THIS PART
 url = "https://api.cloudflare.com/client/v4/user/tokens/verify"
@@ -52,81 +52,6 @@ def get_list_content(accountid, listid):
     resp = httpx.get(query, headers=headers, verify=False)
     print(resp.text)
     return resp.json().get('result')
-
-def correct_locationid(locationid):
-    index_list = [8, 13, 18, 23]
-    str = locationid
-    for index in index_list:
-        new_str = f'{str[:index]}-{str[index:]}'
-        str = new_str
-
-    return new_str
-
-def graphql_cf(headers, locationid, accountid):
-    # Select your transport with a defined url endpoint
-    transport = AIOHTTPTransport(url="https://api.cloudflare.com/client/v4/graphql", headers=headers)
-
-    # Create a GraphQL client using the defined transport
-    client = Client(transport=transport)
-
-    # Provide a GraphQL query
-    #                              locationId: "58b28adc-e162-43d1-b140-4bcd9d9bc171"
-
-    query = gql(
-        '''
-               query {
-                 viewer {
-                    accounts (filter: {accountTag: $accountid})
-                        {
-                            gatewayResolverQueriesAdaptiveGroups(
-                                filter:
-                                                                                  {
-                                  locationId: $locationid                                              
-                                  datetime_gt: "2023-02-23T8:28:06.326740988Z"
-                                  datetime_lt: "2023-02-23T12:28:06.326740988Z"
-
-                                   },
-                               limit: 1,
-                            )
-                        {
-                            count
-                            dimensions
-                                        {
-                                  datetime
-                                  locationId
-                                  resolverDecision
-                                  queryNameReversed
-                                  scheduleInfo
-                                  categoryIds
-                            }
-                        }
-                    }
-                }
-            }
-            '''
-    )
-
-    params = {'accountid': accountid, 'locationid': locationid}
-    # Execute the query on the transport
-    result = client.execute(query, variable_values=params)
-    # print(result['viewer']['accounts'][0]['gatewayResolverQueriesAdaptiveGroups'])
-    return result['viewer']['accounts'][0]['gatewayResolverQueriesAdaptiveGroups']
-
-def keep_columns(dataframe, collumns_to_keep):
-    df_columns = list(dataframe)
-    for column in df_columns:
-        if column not in collumns_to_keep:
-            dataframe.drop(column, axis=1, inplace=True)
-
-def get_networks(dataframe):
-    for index, networks in dataframe.iterrows():
-        temp_list = []
-        for network in networks['networks']:
-            subnet = network.get('network')
-            temp_list.append(subnet)
-        string = ', '.join(temp_list)
-        dataframe.loc[index, ['networks']] = string
-    return dataframe
 
 def return_id_for_account(account_name):
     '''return account for a name'''
@@ -237,6 +162,7 @@ def remove_list(headers, accountid, listid):
 def update_ip_location(accountid):
     # Get public IP
     public_ip = get_public_ip()
+    public_ip = public_ip + "/32"
 
     # Get locations from CF
     cfgateway_locations_df = pandas.json_normalize(get_dnslocations(headers, accountid))
@@ -247,7 +173,7 @@ def update_ip_location(accountid):
     print(f"Public IP: {public_ip}")
     print(f"Cloudflare registered Public IP: {cf_location_ip}")
 
-    if public_ip != cf_location_ip and public_ip != False:
+    if public_ip == cf_location_ip and public_ip != False:
         # Create the new default location with the newer IP
         now = datetime.now()
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
