@@ -13,7 +13,7 @@ import traceback
 # ACCOUNT INFORMATION HERE
 name_account = 'home' #Also location name
 email_account = ''
-token = "Bearer 
+token = "Bearer '
 
 # DO NOT TOUCH THIS PART
 url = "https://api.cloudflare.com/client/v4/user/tokens/verify"
