@@ -1,6 +1,7 @@
 #/usr/bin/python
 # Script designed to perform Cloudflare Zero Trust updates
 # Created By AC - 0.1 - 20251222
+# Moded by AC - 1.0 - In case hash from ads did not cange, avoid doing the update - 20251228
 
 import requests
 import httpx
@@ -9,16 +10,18 @@ import pandas
 import json
 from datetime import datetime
 import traceback
+import hashlib
 
 # ACCOUNT INFORMATION HERE
 name_account = 'home' #Also location name
-email_account = ''
-token = "Bearer '
+email_account = 'email@mail.com'
+token = "Bearer "
 
 # DO NOT TOUCH THIS PART
 url = "https://api.cloudflare.com/client/v4/user/tokens/verify"
 ads_list = "https://small.oisd.nl/"
 ads_fw_name = "Adblock-Plus" # Also name for filtering lists
+ads_list_hash_file = "adslisthash.txt"
 
 headers = CaseInsensitiveDict()
 headers["X-Auth-Email"] = email_account
@@ -72,7 +75,12 @@ def get_public_ip():
     if "." in resp.text:
         return resp.text
     else:
-        return False
+        query = "https://api.ipify.org?format=json"
+        resp = httpx.get(query, verify=False)
+        if "." in str(resp.text):
+            return resp.json().get('ip')
+        else:
+            return False
 
 def create_location(headers, accountid, location_name, public_ip):
     new_location = {
@@ -162,7 +170,8 @@ def remove_list(headers, accountid, listid):
 def update_ip_location(accountid):
     # Get public IP
     public_ip = get_public_ip()
-    public_ip = public_ip + "/32"
+    if "/" not in public_ip:
+        public_ip = public_ip + "/32"
 
     # Get locations from CF
     cfgateway_locations_df = pandas.json_normalize(get_dnslocations(headers, accountid))
@@ -173,7 +182,7 @@ def update_ip_location(accountid):
     print(f"Public IP: {public_ip}")
     print(f"Cloudflare registered Public IP: {cf_location_ip}")
 
-    if public_ip == cf_location_ip and public_ip != False:
+    if public_ip != cf_location_ip and public_ip != False:
         # Create the new default location with the newer IP
         now = datetime.now()
         timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
@@ -198,6 +207,11 @@ def load_oisd(url: str) -> str:
     except requests.exceptions.RequestException as e:
         print(f"Request failed: {e}")
         return ""
+
+def hash_list(data):
+    # Serialization
+    normalized = json.dumps(data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 def update_ads_filter_rule(accountid):
     # Get id from Firewall adguard or create
@@ -246,64 +260,86 @@ def update_ads_filter_list(accountid):
     # ads_block_input = list(open("cloudflare_home_test.txt"))
     ads_block_input = load_oisd(ads_list)
 
-    # Get id from Firewall adguard or create
-    cfgateway_fw = get_dnsfirewall(headers, accountid)
-    old_cf_fw_id = ""
-    old_cf_lists_id = ""
-    new_cf_fw_id = ""
-    updated_at = ""
-    new_cf_lists_id = list()
-    for rule in cfgateway_fw:
-        if ads_fw_name in rule['name']:
-            old_cf_fw_id = rule['id']
-            old_cf_lists_id = rule['traffic']
-            updated_at = rule['updated_at']
-    old_cf_lists_id = old_cf_lists_id.replace(" or ","").split("dns.fqdn in $")
-    old_cf_lists_id.pop(0)
+    # Loading hash from file if its possible
+    try:
+        hash = list(open(ads_list_hash_file))[0]
+    except:
+        hash = ""
 
-    if str(datetime.now().date()) not in updated_at and len(ads_block_input) > 1000:
-    #if 1 == 1:
-        if old_cf_fw_id != "":
-            # Removing old Rule
-            remove_rule(headers, accountid, old_cf_fw_id)
+    hash_check = list()
+    for line in ads_block_input.splitlines():
+        line = line.strip()
+        if "||" in line and "^" in line:
+            hash_check.append(line)
 
-            # Removing old lists
-            for listid in old_cf_lists_id:
-                remove_list(headers, accountid, listid)
+    print(f"Initial hash: {hash}")
 
-        filter_list = list()
-        i = 0
-        j = 0
-        #for line in ads_block_input:
-        for line in ads_block_input.splitlines():
-            i = i + 1
-            if i < 999:
-                line = line.strip()
-                if "||" in line and "^" in line:
-                    line = line.replace("||", "").replace("^", "")
-                    data = {
-                        "value": line,
-                    }
-                    filter_list.append(data)
-            else:
-                j = j + 1
-                i = 0
-                if j < 10:
-                    list_name = f"{ads_fw_name}-0{j}"
+    print(f"New hash: {hash_list(hash_check)}")
+
+    if str(hash) == str(hash_list(hash_check)):
+        print(f"Ads list does not need to be updated")
+    else:
+        # Updating Hash in file
+        out = open(ads_list_hash_file,"w")
+        out.write(hash_list(hash_check))
+
+        # Get id from Firewall adguard or create
+        cfgateway_fw = get_dnsfirewall(headers, accountid)
+        old_cf_fw_id = ""
+        old_cf_lists_id = ""
+        new_cf_fw_id = ""
+        updated_at = ""
+        new_cf_lists_id = list()
+        for rule in cfgateway_fw:
+            if ads_fw_name in rule['name']:
+                old_cf_fw_id = rule['id']
+                old_cf_lists_id = rule['traffic']
+                updated_at = rule['updated_at']
+        old_cf_lists_id = old_cf_lists_id.replace(" or ","").split("dns.fqdn in $")
+        old_cf_lists_id.pop(0)
+
+        if str(datetime.now().date()) not in updated_at and len(ads_block_input) > 1000:
+        #if 1 == 1:
+            if old_cf_fw_id != "":
+                # Removing old Rule
+                remove_rule(headers, accountid, old_cf_fw_id)
+
+                # Removing old lists
+                for listid in old_cf_lists_id:
+                    remove_list(headers, accountid, listid)
+
+            filter_list = list()
+            i = 0
+            j = 0
+            for line in ads_block_input.splitlines():
+                i = i + 1
+                if i < 999:
+                    line = line.strip()
+                    if "||" in line and "^" in line:
+                        line = line.replace("||", "").replace("^", "")
+                        data = {
+                            "value": line,
+                        }
+                        filter_list.append(data)
                 else:
-                    list_name = f"{ads_fw_name}-{j}"
-                print(f"Creating list {list_name}")
-                reply = create_list(headers, accountid, list_name, filter_list)
-                new_cf_lists_id.append(reply['id'])
-                filter_list = list()
-        j = j + 1
-        list_name = f"{ads_fw_name}-{j}"
-        reply = create_list(headers, accountid, list_name, filter_list)
-        new_cf_lists_id.append(reply['id'])
-        traffic = f"dns.fqdn in ${new_cf_lists_id[0]}"
-        for k in range(1,len(new_cf_lists_id)):
-            traffic = traffic + " or dns.fqdn in $" + new_cf_lists_id[k]
-        create_fw_rule(headers, accountid, ads_fw_name, traffic)
+                    j = j + 1
+                    i = 0
+                    if j < 10:
+                        list_name = f"{ads_fw_name}-0{j}"
+                    else:
+                        list_name = f"{ads_fw_name}-{j}"
+                    print(f"Creating list {list_name}")
+                    reply = create_list(headers, accountid, list_name, filter_list)
+                    new_cf_lists_id.append(reply['id'])
+                    filter_list = list()
+            j = j + 1
+            list_name = f"{ads_fw_name}-{j}"
+            reply = create_list(headers, accountid, list_name, filter_list)
+            new_cf_lists_id.append(reply['id'])
+            traffic = f"dns.fqdn in ${new_cf_lists_id[0]}"
+            for k in range(1,len(new_cf_lists_id)):
+                traffic = traffic + " or dns.fqdn in $" + new_cf_lists_id[k]
+            create_fw_rule(headers, accountid, ads_fw_name, traffic)
 
 def remove_all_lists(accountid):
     reply = get_lists(accountid)
