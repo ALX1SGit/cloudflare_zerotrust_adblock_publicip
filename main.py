@@ -1,7 +1,7 @@
 #/usr/bin/python
 # Script designed to perform Cloudflare Zero Trust updates
 # Created By AC - 0.1 - 20251222
-# Moded by AC - 1.0 - In case hash from ads did not cange, avoid doing the update - 20251228
+# Moded by AC - 1.0 - In case hash from ads did not cange, avoid doing the update & added backup public IP API service - 20251228
 
 import requests
 import httpx
